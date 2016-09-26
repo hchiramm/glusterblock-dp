@@ -5,11 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"time"
-
+	"strings"
+	"bytes"
 	"github.com/golang/glog"
-	// TODO get rid of this and use https://github.com/kubernetes/kubernetes/pull/32718
-	"github.com/humblec/glusterfs-provisioner/framework"
-
+	"github.com/hchiramm/glusterfs-provisioner/framework"
 	"k8s.io/client-go/1.4/kubernetes"
 	core_v1 "k8s.io/client-go/1.4/kubernetes/typed/core/v1"
 	"k8s.io/client-go/1.4/pkg/api"
@@ -57,6 +56,7 @@ type glusterfsController struct {
 	// provisions volumes. The value of annDynamicallyProvisioned and
 	// annStorageProvisioner to set & watch for, respectively
 	provisionerName string
+	provisionerConfig ProvisionerConfig
 
 	claimSource      cache.ListerWatcher
 	claimController  *framework.Controller
@@ -78,10 +78,11 @@ type glusterfsController struct {
 	createProvisionedPVInterval   time.Duration
 }
 
-func newglusterfsController(
+func newGlusterfsController(
 	client kubernetes.Interface,
 	resyncPeriod time.Duration,
 	provisionerName string,
+	provisionerConfig ProvisionerConfig,
 ) *glusterfsController {
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartRecordingToSink(&core_v1.EventSinkImpl{Interface: client.Core().Events(v1.NamespaceAll)})
@@ -89,14 +90,15 @@ func newglusterfsController(
 	out, err := exec.Command("hostname").Output()
 	if err != nil {
 		glog.Errorf("Error getting hostname for specifying it as source of events: %v", err)
-		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: fmt.Sprintf("nfs-provisioner-%s", string(out))})
-	} else {
 		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: "glusterfs-provisioner"})
+	} else {
+		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: fmt.Sprintf("glusterfs-provisioner-%s", strings.TrimSpace(string(out)))})
 	}
 
 	controller := &glusterfsController{
 		client:                        client,
 		provisionerName:               provisionerName,
+		provisionerConfig: 				provisionerConfig,
 		eventRecorder:                 eventRecorder,
 		runningOperations:             goroutinemap.NewGoRoutineMap(false /* exponentialBackOffOnError */),
 		createProvisionedPVRetryCount: createProvisionedPVRetryCount,
@@ -144,9 +146,11 @@ func newglusterfsController(
 	controller.classSource = &cache.ListWatch{
 		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
 			return client.Storage().StorageClasses().List(options)
+			//return client.Extensions().StorageClasses().List(options)
 		},
 		WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
 			return client.Storage().StorageClasses().Watch(options)
+			//return client.Extensions().StorageClasses().Watch(options)
 		},
 	}
 	controller.classes = cache.NewStore(framework.DeletionHandlingMetaNamespaceKeyFunc)
@@ -256,7 +260,7 @@ func (ctrl *glusterfsController) shouldDelete(volume *v1.PersistentVolume) bool 
 		}
 	}
 
-	path := fmt.Sprintf("/exports/%s", volume.ObjectMeta.Name)
+	path := fmt.Sprintf("iscsi-volume-%s", volume.ObjectMeta.Name)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false
 	}
@@ -388,36 +392,14 @@ type VolumeOptions struct {
 }
 
 
-/* For my reference
-
-
-+type ISCSIDiskVolumeSource struct {
-+	// Required: iSCSI target IP
-+	TargetIP string `json:"targetIP,omitempty" description:"iscsi target IP address"`
-+	// Required:  target iSCSI Qualified Name
-+	IQN string `json:"iqn,omitempty" description:"iSCSI Qualified Name"`
-+	// Required: iSCSI target lun number
-+	Lun int `json:"lun,omitempty" description:"iscsi target lun number"`
-+	// Required: Filesystem type to mount.
-+	// Must be a filesystem type supported by the host operating system.
-+	// Ex. "ext4", "xfs", "ntfs"
-+	// TODO: how do we prevent errors in the filesystem from compromising the machine
-+	FSType string `json:"fsType,omitempty" description:"file system type to mount, such as ext4, xfs, ntfs"`
-+	// Optional: Defaults to false (read/write). ReadOnly here will force
-+	// the ReadOnly setting in VolumeMounts.
-+	ReadOnly bool `json:"readOnly,omitempty" description:"read-only if true, read-write otherwise (false or unspecified)"`
-+}
-
-*/
-
 // provision creates a volume i.e. the storage asset and returns a PV object for
 // the volume
 func (ctrl *glusterfsController) provision(options VolumeOptions) (*v1.PersistentVolume, error) {
-	// instead of createVolume could call out a script of some kind
 	server, path, err := ctrl.createVolume(options.PVName)
 	if err != nil {
 		return nil, err
 	}
+	glog.V(1).Infof("Server and path returned :%v %v", server, path)
 	pv := &v1.PersistentVolume{
 		ObjectMeta: v1.ObjectMeta{
 			Name:   options.PVName,
@@ -433,12 +415,12 @@ func (ctrl *glusterfsController) provision(options VolumeOptions) (*v1.Persisten
 				v1.ResourceName(v1.ResourceStorage): options.Capacity,
 			},
 			PersistentVolumeSource: v1.PersistentVolumeSource{
-				ISCSI: &v1.ISCSIDiskVolumeSource{
-					TargetIP: 10.16.154.81
-     				IQN: iqn.2014-12.example.server:storage.target00
-     				Lun: 0
-     				FSType: 'ext4'
-     			    ReadOnly: false
+				ISCSI: &v1.ISCSIVolumeSource{
+					TargetPortal: server,
+					IQN: path,
+     				Lun: 0,
+     				FSType: "ext3",
+     			    ReadOnly: false,
 					
 				},
 			},
@@ -448,12 +430,23 @@ func (ctrl *glusterfsController) provision(options VolumeOptions) (*v1.Persisten
 	return pv, nil
 }
 
-// createVolume creates a volume i.e. the storage asset. It creates a unique
-// directory under /exports (which could be the mountpoint of some persistent
-// storage or just the ephemeral container directory) and exports it.
+// createVolume creates a volume i.e. the storage asset.
+
+
 func (ctrl *glusterfsController) createVolume(PVName string) (string, string, error) {
-	server := "192.168.43.1"
-	path := "/dev/loop1"
+	var server,path string
+	if ctrl.provisionerConfig.Opmode == "script" {
+			cmd := exec.Command("sh", ctrl.provisionerConfig.Scriptpath)
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			err := cmd.Run()
+			if err != nil {
+					glog.Errorf("%v", err)
+			}
+			result := strings.Fields(out.String())
+			server = result[0]
+			path = result[1]
+	}
 	return server, path, nil
 }
 
