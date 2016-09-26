@@ -1,7 +1,7 @@
 kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
-  name: glusterfsblk
+  name: iscsivolume
   annotations:
     volume.beta.kubernetes.io/storage-class: "hchiramm"
 spec:

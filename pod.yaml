@@ -1,11 +1,11 @@
 kind: Pod
 apiVersion: v1
 metadata:
-  name: glusterfs-provisioner
+  name: iscsi-provisioner
 spec:
   containers:
-    - name: glusterfs-provisioner
-      image: hchiramm/glusterfs-provisioner
+    - name: iscsi-provisioner
+      image: hchiramm/iscsi-provisioner
       args:
-        - "-provisioner-name=glusterfs-provisioner"
+        - "-provisioner-name=iscsi-provisioner"
       imagePullPolicy: "IfNotPresent"

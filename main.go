@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	provisionerName = flag.String("provisioner-name", "glusterfs-provisioner", "The name of this provisioner, i.e. the value `StorageClasses` will set for their `provisioner`.")
+	provisionerName = flag.String("provisioner-name", "iscsi-provisioner", "The name of this provisioner, i.e. the value `StorageClasses` will set for their `provisioner`.")
 	execMode 		= flag.String("execmode", "script", "[script/restapi..etc]")
 	scriptPath 		= flag.String("scriptpath", "path", "[--path=./prov.sh]")
 	outOfCluster 	= flag.Bool("out-of-cluster", false, "If the provisioner is being run out of cluster. Set the master or kubeconfig flag accordingly if true. Default false.")
@@ -84,6 +84,6 @@ func main() {
 		glog.Errorf("Failed to create client: %v", err)
 			os.Exit(1)
 }
-	glusterc := newGlusterfsController(clientset, 15*time.Second, *provisionerName, provisionerConfig)
+	glusterc := newiscsiController(clientset, 15*time.Second, *provisionerName, provisionerConfig)
 	glusterc.Run(wait.NeverStop)
 }

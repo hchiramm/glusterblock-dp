@@ -8,7 +8,7 @@ import (
 	"strings"
 	"bytes"
 	"github.com/golang/glog"
-	"github.com/hchiramm/glusterfs-provisioner/framework"
+	"github.com/hchiramm/iscsi-provisioner/framework"
 	"k8s.io/client-go/1.4/kubernetes"
 	core_v1 "k8s.io/client-go/1.4/kubernetes/typed/core/v1"
 	"k8s.io/client-go/1.4/pkg/api"
@@ -49,7 +49,7 @@ const createProvisionedPVRetryCount = 5
 // Interval between retries when we create a PV object for a provisioned volume.
 const createProvisionedPVInterval = 10 * time.Second
 
-type glusterfsController struct {
+type iscsiController struct {
 	client kubernetes.Interface
 
 	// The name of the provisioner for which this controller dynamically
@@ -78,24 +78,24 @@ type glusterfsController struct {
 	createProvisionedPVInterval   time.Duration
 }
 
-func newGlusterfsController(
+func newiscsiController(
 	client kubernetes.Interface,
 	resyncPeriod time.Duration,
 	provisionerName string,
 	provisionerConfig ProvisionerConfig,
-) *glusterfsController {
+) *iscsiController {
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartRecordingToSink(&core_v1.EventSinkImpl{Interface: client.Core().Events(v1.NamespaceAll)})
 	var eventRecorder record.EventRecorder
 	out, err := exec.Command("hostname").Output()
 	if err != nil {
 		glog.Errorf("Error getting hostname for specifying it as source of events: %v", err)
-		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: "glusterfs-provisioner"})
+		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: "iscsi-provisioner"})
 	} else {
-		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: fmt.Sprintf("glusterfs-provisioner-%s", strings.TrimSpace(string(out)))})
+		eventRecorder = broadcaster.NewRecorder(v1.EventSource{Component: fmt.Sprintf("iscsi-provisioner-%s", strings.TrimSpace(string(out)))})
 	}
 
-	controller := &glusterfsController{
+	controller := &iscsiController{
 		client:                        client,
 		provisionerName:               provisionerName,
 		provisionerConfig: 				provisionerConfig,
@@ -164,8 +164,8 @@ func newGlusterfsController(
 	return controller
 }
 
-func (ctrl *glusterfsController) Run(stopCh <-chan struct{}) {
-	glog.Info("Starting glusterfs provisioner controller!")
+func (ctrl *iscsiController) Run(stopCh <-chan struct{}) {
+	glog.Info("Starting iscsi provisioner controller!")
 	go ctrl.claimController.Run(stopCh)
 	go ctrl.volumeController.Run(stopCh)
 	go ctrl.classReflector.RunUntil(stopCh)
@@ -174,7 +174,7 @@ func (ctrl *glusterfsController) Run(stopCh <-chan struct{}) {
 
 // On add claim, check if the added claim should have a volume provisioned for
 // it and provision one if so.
-func (ctrl *glusterfsController) addClaim(obj interface{}) {
+func (ctrl *iscsiController) addClaim(obj interface{}) {
 	claim, ok := obj.(*v1.PersistentVolumeClaim)
 	if !ok {
 		glog.Errorf("Expected PersistentVolumeClaim but addClaim received %+v", obj)
@@ -192,13 +192,13 @@ func (ctrl *glusterfsController) addClaim(obj interface{}) {
 
 // On update claim, pass the new claim to addClaim. Updates occur at least every
 // resyncPeriod.
-func (ctrl *glusterfsController) updateClaim(oldObj, newObj interface{}) {
+func (ctrl *iscsiController) updateClaim(oldObj, newObj interface{}) {
 	ctrl.addClaim(newObj)
 }
 
 // On update volume, check if the updated volume should be deleted and delete if
 // so. Updates occur at least every resyncPeriod.
-func (ctrl *glusterfsController) updateVolume(oldObj, newObj interface{}) {
+func (ctrl *iscsiController) updateVolume(oldObj, newObj interface{}) {
 	volume, ok := newObj.(*v1.PersistentVolume)
 	if !ok {
 		glog.Errorf("Expected PersistentVolume but handler received %#v", newObj)
@@ -214,7 +214,7 @@ func (ctrl *glusterfsController) updateVolume(oldObj, newObj interface{}) {
 	}
 }
 
-func (ctrl *glusterfsController) shouldProvision(claim *v1.PersistentVolumeClaim) bool {
+func (ctrl *iscsiController) shouldProvision(claim *v1.PersistentVolumeClaim) bool {
 	// TODO do this and remove all code below VolumeName check
 	// https://github.com/kubernetes/kubernetes/pull/30285
 	// if claim.Annotations[annStorageProvisioner] != provisionerName {
@@ -248,7 +248,7 @@ func (ctrl *glusterfsController) shouldProvision(claim *v1.PersistentVolumeClaim
 	return true
 }
 
-func (ctrl *glusterfsController) shouldDelete(volume *v1.PersistentVolume) bool {
+func (ctrl *iscsiController) shouldDelete(volume *v1.PersistentVolume) bool {
 	// TODO https://github.com/kubernetes/kubernetes/pull/32565 will not Fail PVs
 	if volume.Status.Phase != v1.VolumeReleased && volume.Status.Phase != v1.VolumeFailed {
 		return false
@@ -268,7 +268,7 @@ func (ctrl *glusterfsController) shouldDelete(volume *v1.PersistentVolume) bool 
 	return true
 }
 
-func (ctrl *glusterfsController) provisionClaimOperation(claim *v1.PersistentVolumeClaim) {
+func (ctrl *iscsiController) provisionClaimOperation(claim *v1.PersistentVolumeClaim) {
 	// Most code here is identical to that found in controller.go of kube's PV controller...
 	claimClass := getClaimClass(claim)
 	glog.V(4).Infof("provisionClaimOperation [%s] started, class: %q", claimToClaimKey(claim), claimClass)
@@ -394,7 +394,7 @@ type VolumeOptions struct {
 
 // provision creates a volume i.e. the storage asset and returns a PV object for
 // the volume
-func (ctrl *glusterfsController) provision(options VolumeOptions) (*v1.PersistentVolume, error) {
+func (ctrl *iscsiController) provision(options VolumeOptions) (*v1.PersistentVolume, error) {
 	server, path, err := ctrl.createVolume(options.PVName)
 	if err != nil {
 		return nil, err
@@ -405,7 +405,7 @@ func (ctrl *glusterfsController) provision(options VolumeOptions) (*v1.Persisten
 			Name:   options.PVName,
 			Labels: map[string]string{},
 			Annotations: map[string]string{
-				"kubernetes.io/createdby": "glusterfs-dynamic-provisioner",
+				"kubernetes.io/createdby": "iscsi-dynamic-provisioner",
 			},
 		},
 		Spec: v1.PersistentVolumeSpec{
@@ -433,7 +433,7 @@ func (ctrl *glusterfsController) provision(options VolumeOptions) (*v1.Persisten
 // createVolume creates a volume i.e. the storage asset.
 
 
-func (ctrl *glusterfsController) createVolume(PVName string) (string, string, error) {
+func (ctrl *iscsiController) createVolume(PVName string) (string, string, error) {
 	var server,path string
 	if ctrl.provisionerConfig.Opmode == "script" {
 			cmd := exec.Command("sh", ctrl.provisionerConfig.Scriptpath)
@@ -450,7 +450,7 @@ func (ctrl *glusterfsController) createVolume(PVName string) (string, string, er
 	return server, path, nil
 }
 
-func (ctrl *glusterfsController) deleteVolumeOperation(volume *v1.PersistentVolume) {
+func (ctrl *iscsiController) deleteVolumeOperation(volume *v1.PersistentVolume) {
 	glog.V(4).Infof("deleteVolumeOperation [%s] started", volume.Name)
 
 	// This method may have been waiting for a volume lock for some time.
@@ -488,14 +488,14 @@ func (ctrl *glusterfsController) deleteVolumeOperation(volume *v1.PersistentVolu
 
 // delete removes the directory backing the given PV that was created by
 // createVolume.
-func (ctrl *glusterfsController) delete(volume *v1.PersistentVolume) error {
+func (ctrl *iscsiController) delete(volume *v1.PersistentVolume) error {
 	// TODO quota, something better than just directories
 	return nil
 }
 
 // scheduleOperation starts given asynchronous operation on given volume. It
 // makes sure the operation is already not running.
-func (ctrl *glusterfsController) scheduleOperation(operationName string, operation func() error) {
+func (ctrl *iscsiController) scheduleOperation(operationName string, operation func() error) {
 	glog.V(4).Infof("scheduleOperation[%s]", operationName)
 
 	err := ctrl.runningOperations.Run(operationName, operation)
@@ -536,7 +536,7 @@ func getClaimClass(claim *v1.PersistentVolumeClaim) string {
 
 // getProvisionedVolumeNameForClaim returns PV.Name for the provisioned volume.
 // The name must be unique.
-func (ctrl *glusterfsController) getProvisionedVolumeNameForClaim(claim *v1.PersistentVolumeClaim) string {
+func (ctrl *iscsiController) getProvisionedVolumeNameForClaim(claim *v1.PersistentVolumeClaim) string {
 	return "pvc-" + string(claim.UID)
 }
 

@@ -1,3 +1,3 @@
 FROM fedora
-COPY glusterfs-provisioner glusterfs-provisioner
-ENTRYPOINT ["/glusterfs-provisioner"]
+COPY iscsi-provisioner iscsi-provisioner
+ENTRYPOINT ["/iscsi-provisioner"]
